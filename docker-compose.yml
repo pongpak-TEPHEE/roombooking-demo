@@ -1,0 +1,32 @@
+# Local demo stack: PostgreSQL + API in demo mode.
+# All values below are throwaway demo values, not production secrets.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: roombooking_demo
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d roombooking_demo"]
+      interval: 3s
+      retries: 20
+
+  api:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      TZ: Asia/Bangkok
+      DATABASE_URL: postgresql://demo:demo@db:5432/roombooking_demo
+      JWT_SECRET: local-demo-access-secret
+      JWT_REFRESH_SECRET: local-demo-refresh-secret
+      FRONTEND_URL: http://localhost:5173
+      DEMO_MODE: "true"
+      DEMO_RESET_ON_START: "true"
+    depends_on:
+      db:
+        condition: service_healthy

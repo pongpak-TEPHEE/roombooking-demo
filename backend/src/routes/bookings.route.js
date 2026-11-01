@@ -1,0 +1,74 @@
+import express from 'express';
+import { 
+    createBookingForTeacher,
+    createBookingForStaff,
+    getPendingBookings,
+    getRoomStatus, 
+    updateBookingStatus, 
+    getApprovedBookings, 
+    getRejectedBookings, 
+    getAllBookingSpecific,
+    getAllBooking,
+    getMyBookings,
+    cancelBooking,
+    editBooking,
+    getMyActiveBookings,
+    getMyBookingHistory,
+    createBookingScope,
+    getCreateBookingScope
+ } 
+from '../controllers/bookings.controller.js';
+import { authenticateToken, authorizeRole } from '../middleware/auth.middleware.js';
+
+const router = express.Router();
+
+router.put('/scope', authenticateToken, authorizeRole('staff'), createBookingScope);
+
+router.get('/scope', authenticateToken, authorizeRole('staff', 'teacher'), getCreateBookingScope);
+
+// กฎ: ต้อง Login + เป็น teacher 
+router.post('/teacher', authenticateToken, authorizeRole('teacher'), createBookingForTeacher);
+
+// กฎ: ต้อง Login + เป็น  staff
+router.post('/staff', authenticateToken, authorizeRole('staff'), createBookingForStaff);
+
+// ดูรายการรออนุมัติ
+router.get('/pending', authenticateToken, authorizeRole('staff', 'teacher'), getPendingBookings);
+
+// ดูรายการอนุมัติ
+router.get('/approved', authenticateToken, authorizeRole('staff', 'teacher'), getApprovedBookings);
+
+// ดูรายการที่ปัดตก
+router.get('/rejected', authenticateToken, authorizeRole('staff', 'teacher'), getRejectedBookings);
+
+// เปลี่ยนสถานะ (เฉพาะ Staff)
+// :id คือตัวแปรที่จะรับ booking_id (เช่น /bookings/b123/status)
+router.put('/:id/status', authenticateToken, authorizeRole('staff'), updateBookingStatus);
+
+// เป็นการดึงรายการทั้งหมดของทุกห้องที่มี status approved
+router.get('/allBooking', getAllBooking);
+
+// เป็นการดึงรายการทั้งหมดของห้องนั้นๆ ที่มี status approved
+router.get('/allBookingSpecific/:roomId', getAllBookingSpecific);
+
+// API ดูประวัติการจองของฉัน
+// GET http://localhost:3000/bookings/my-history
+// ⚠️ ต้องวางไว้ "ก่อน" /:id นะครับ ไม่งั้นมันจะนึกว่า "my-history" คือ id
+router.get('/my-history', authenticateToken, getMyBookings);
+
+// API ยกเลิกการจอง
+// PUT http://localhost:3000/bookings/15/cancel
+router.put('/:id/cancel', authenticateToken, cancelBooking);
+
+router.put('/:id', authenticateToken, authorizeRole('teacher', 'staff'), editBooking);
+
+// ใช้เมื่อเราแสกน QR-Code จะเด้งไปหมายเลขห้องทีอยู่ใน QR code
+router.get('/:id', getRoomStatus);
+
+// ดึงรายการที่เวลาที่จองยังอยู่ในอนาคต และเป็น status approved, padding
+router.get('/my-bookings/active', authenticateToken, authorizeRole('teacher'), getMyActiveBookings);
+
+// ดึงรายการที่เวลาที่จองเป็นอดีตไปแล้ว และเป็น status approved, rejected, cancel
+router.get('/my-bookings/history', authenticateToken, authorizeRole('teacher'), getMyBookingHistory);
+
+export default router;

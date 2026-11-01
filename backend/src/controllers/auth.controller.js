@@ -1,0 +1,346 @@
+import { pool } from '../config/db.js';
+import jwt from 'jsonwebtoken'; // โมดูลสำหรับสร้างและตรวจสอบ JWT
+import crypto from 'crypto'; // โมดูลสำหรับสร้างตัวเลขสุ่มและ UUID ของ Node.js
+import { sendOTPEmail } from '../services/mailer.js';
+import { isDemoMode, DEMO_ACCOUNTS } from '../demo/config.js';
+
+// /auth/request-otp
+// ขอ OTP ส่งไปยัง email.ku.th
+export const requestOTP = async (req, res) => {
+  const { email } = req.body;
+
+  // 1. ตรวจ domain (เฉพาะ @ku.th)
+  if (!email.endsWith('@ku.th')) {
+    return res.status(400).json({ message: 'อนุญาตให้ใช้งานเฉพาะอีเมล @ku.th เท่านั้น' });
+  }
+
+  try {
+    // 🚨 2. ตรวจสอบว่ามีอีเมลนี้ในระบบ (Database) หรือไม่
+    const userCheck = await pool.query(
+      `SELECT email, is_active FROM public."Users" WHERE email = $1`,
+      [email]
+    );
+
+    // ถ้าหาไม่เจอ เตะกลับทันที
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: 'ไม่พบอีเมลนี้ในระบบ กรุณาติดต่อผู้ดูแลระบบ' });
+    }
+
+    // 💡 (แถม) ถ้ามีอีเมล แต่บัญชีถูกระงับการใช้งานอยู่
+    if (userCheck.rows[0].is_active === false) {
+      return res.status(403).json({ message: 'บัญชีของคุณถูกระงับการใช้งาน กรุณาติดต่อเจ้าหน้าที่' });
+    }
+
+    // 3. เช็คก่อนว่าเพิ่งขอไปหรือเปล่า (Cooldown)
+    const lastOtpCheck = await pool.query(
+      `SELECT created_at FROM public."OTP"
+       WHERE email = $1
+       ORDER BY created_at DESC LIMIT 1`, // ดูอันล่าสุด
+      [email]
+    );
+
+    if (lastOtpCheck.rows.length > 0) {
+      const lastRequest = new Date(lastOtpCheck.rows[0].created_at);
+      const now = new Date();
+
+      // คำนวณความต่างเวลา (หน่วยวินาที)
+      const diffSeconds = (now - lastRequest) / 1000;
+
+      // 🛠️ แก้ไข: เปลี่ยนเป็นเช็คที่ 60 วินาที (1 นาที) เพื่อให้ตรงกับข้อความแจ้งเตือน
+      if (diffSeconds < 60) {
+        return res.status(429).json({
+          message: `กรุณารออีก ${Math.ceil(60 - diffSeconds)} วินาที ก่อนขอรหัสใหม่`
+        });
+      }
+    }
+
+    // 4. สร้าง OTP 6 หลัก
+    const otp = crypto.randomInt(100000, 1000000).toString();
+
+    // กำหนดเวลาหมดอายุ (5 นาที จะดีกว่า 1 นาทีสำหรับการส่งเมลจริง เผื่อ delay)
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    // สร้าง Request ID
+    const requestId = crypto.randomUUID();
+
+    // 5. ลบ OTP เก่าของ Email นี้ทิ้งก่อน (Cleanup)
+    await pool.query(`DELETE FROM public."OTP" WHERE email = $1`, [email]);
+
+    // 6. บันทึก OTP ลงฐานข้อมูล
+    await pool.query(
+      `INSERT INTO public."OTP"
+        (request_id, email, otp_code, expired_at, created_at)
+        VALUES ($1, $2, $3, $4, NOW())`,
+      [requestId, email, otp, expiresAt]
+    );
+
+    // 7. ส่งอีเมล
+    const isSent = await sendOTPEmail(email, otp);
+    if (!isSent) {
+      // ถ้าส่งไม่ผ่าน ให้แจ้ง Error กลับไปเลย
+      return res.status(500).json({ message: 'เกิดข้อผิดพลาดในการส่งอีเมล OTP' });
+    }
+
+    res.json({
+      message: `ส่งรหัส OTP ไปที่ ${email} เรียบร้อยแล้ว`,
+      requestId: requestId
+    });
+
+  } catch (error) {
+    console.error('Request OTP Error:', error);
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์' });
+  }
+};
+
+// /auth/verify-otp
+// รับ OTP ที่ USER กรอกมาเพื่อ recheck กับ database
+export const verifyOTP = async (req, res) => {
+  const { email, otp_code } = req.body;
+
+  try {
+    //  ค้นหา OTP ที่ถูกต้องและยังไม่หมดอายุ
+    const otpResult = await pool.query(
+      `SELECT * FROM public."OTP" 
+      WHERE email = $1 AND otp_code = $2 AND expired_at > NOW()`,
+      [email, otp_code]
+    );
+
+    if (otpResult.rows.length === 0) {
+      return res.status(400).json({ message: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ' });
+    }
+
+    // ดึงข้อมูล User
+    const userResult = await pool.query(
+      'SELECT user_id, title, name, surname, email, role, session_id FROM public."Users" WHERE email = $1',
+      [email]
+    );
+
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ message: 'ไม่พบผู้ใช้งานในระบบ (กรุณาติดต่อเจ้าหน้าที่)' });
+    }
+
+    const user = userResult.rows[0];
+
+    // 1. สร้าง session_id ใหม่ (ใช้ crypto.randomBytes จะได้ string ความยาว 20 ตัวอักษร พอดีกับโครงสร้าง DB)
+    const sessionId = crypto.randomBytes(10).toString('hex');
+
+    // 2. 🔑 ดอกที่ 1: สร้าง Access Token (อายุสั้น 1 ชั่วโมง)
+    const accessToken = jwt.sign(
+      {
+        user_id: user.user_id,
+        role: user.role,
+        name: user.name,
+        session_id: sessionId
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: '30m' } // { expiresIn: '15m' } กำหนดอายุ token เป็น 15 นาที
+    );
+
+    // 3. 🗝️ ดอกที่ 2: สร้าง Refresh Token (อายุยาว 7 วัน)
+    const refreshToken = jwt.sign(
+      { user_id: user.user_id },
+      process.env.JWT_REFRESH_SECRET, 
+      { expiresIn: '7d' } // { expiresIn: '7d' } กำหนดอายุของ refresh token เป็น 7 วัน
+    );
+
+    // 📦 ฝัง Refresh Token ลงใน HttpOnly Cookie
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true, // ป้องกัน XSS (Javascript ฝั่ง Frontend จะมองไม่เห็น)
+      secure: true, // process.env.NODE_ENV === 'production', // ถ้าขึ้น Server จริง (https) ถึงจะทำงาน
+      sameSite: 'none', // 'strict', // ป้องกันการโจมตีข้ามเว็บไซต์ (CSRF)
+      maxAge: 7 * 24 * 60 * 60 * 1000, // อายุ 7 วัน (หน่วยเป็นมิลลิวินาที)
+    });
+
+    // 3. อัปเดตสถานะ is_verified และ session_id ในตาราง Users
+    await pool.query(
+      'UPDATE public."Users" SET is_verified = TRUE, session_id = $2 WHERE email = $1',
+      [email, sessionId]
+    );
+
+    // ลบ OTP ทิ้ง
+    await pool.query('DELETE FROM public."OTP" WHERE email = $1', [email]);
+
+    //  ส่ง Response กลับไป
+    res.json({
+      message: 'เข้าสู่ระบบสำเร็จ',
+      token: accessToken, // ส่ง Token
+      user: { 
+        user_id: user.user_id,
+        title: user.title,
+        name: user.name,
+        surname: user.surname,
+        email: user.email,
+        role: user.role
+      }
+    });
+
+  } catch (error) {
+    console.error('Verify OTP Error:', error);
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดที่เซิร์ฟเวอร์' });
+  }
+};
+
+// /auth//refresh-token
+// ฟังก์ชันต่ออายุ Access Token
+export const refreshToken = async (req, res) => {
+
+  // 1. ดึง Refresh Token จาก Cookie ที่เบราว์เซอร์แนบมาให้
+  const token = req.cookies.refreshToken;
+
+  if (!token) {
+    return res.status(401).json({ message: 'ไม่พบ Refresh Token กรุณาเข้าสู่ระบบใหม่' });
+  }
+
+  try {
+    // 2. ตรวจสอบว่า Refresh Token ถูกต้องและยังไม่หมดอายุใช่ไหม
+    const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+
+    // 🚨 วิ่งไปเช็คข้อมูลล่าสุดใน Database (จุดที่เพิ่มเข้ามา!)
+    const userResult = await pool.query(
+      `SELECT user_id, role, name, session_id, is_active FROM public."Users" WHERE user_id = $1`,
+      [decoded.user_id]
+    );
+
+    // ตรวจสอบว่ายังมี User คนนี้อยู่ไหม หรือถูกระงับการใช้งานไปหรือยัง
+    if (userResult.rows.length === 0 || userResult.rows[0].is_active === false) {
+      res.clearCookie('refreshToken'); // ริบกุญแจคืน
+      return res.status(401).json({ message: 'บัญชีผู้ใช้ถูกระงับ หรือไม่มีอยู่ในระบบแล้ว' });
+    }
+
+    const currentUser = userResult.rows[0];
+
+    // 3. สร้าง Access Token ดอกใหม่ (อายุ 1 ชม. เหมือนเดิม)
+    const newAccessToken = jwt.sign(
+      { user_id: currentUser.user_id,
+        role: currentUser.role,
+        name: currentUser.name,
+        session_id: currentUser.session_id
+      }, 
+      process.env.JWT_SECRET,
+      { expiresIn: '30m' }
+    );
+
+    // 4. ส่งกุญแจดอกใหม่กลับไปให้ Frontend
+    res.json({ token: newAccessToken });
+
+  } catch (error) {
+    // ถ้า Refresh Token หมดอายุ (ครบ 7 วัน) หรือโดนปลอมแปลง ให้ลบทิ้ง
+    res.clearCookie('refreshToken');
+    return res.status(401).json({ message: 'Refresh Token หมดอายุ กรุณาเข้าสู่ระบบใหม่' });
+  }
+};
+
+// /auth/logout
+// เป็นการลบ token ของผู้ใช้ออก และเคลียร์ Refresh Token ใน Cookie
+export const logout = async (req, res) => {
+  try {
+    // ==========================================
+    // 🛡️ 1. จัดการ Access Token (ยัดลง Blacklist และลบ Session)
+    // ==========================================
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (token) {
+      const decoded = jwt.decode(token);
+
+      if (decoded && decoded.exp) {
+        const expiresAt = new Date(decoded.exp * 1000);
+
+        // บันทึกลง Blacklist
+        await pool.query(
+          `INSERT INTO public."TokenBlacklist" (token, expires_at) 
+           VALUES ($1, $2) 
+           ON CONFLICT (token) DO NOTHING`, 
+          [token, expiresAt]
+        );
+
+        // ล้าง session_id ของผู้ใช้ออก
+        // (demo mode: visitors share one demo account, so keep the session for everyone else)
+        if (!isDemoMode() && decoded.user_id && decoded.session_id) {
+          await pool.query(
+            'UPDATE public."Users" SET session_id = NULL WHERE user_id = $1 AND session_id = $2',
+            [decoded.user_id, decoded.session_id]
+          );
+        }
+      }
+    }
+
+    // ==========================================
+    // 🍪 2. จัดการ Refresh Token (หัวใจสำคัญในการหยุดวงจรต่ออายุอัตโนมัติ)
+    // ==========================================
+    // สั่งให้ Browser ลบ Cookie ที่ชื่อ 'refreshToken' ทิ้งทันที
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: true, // ต้องตรงกับตอนที่สร้าง (ตอน verifyOTP)
+      sameSite: 'none', // ต้องตรงกับตอนที่สร้าง
+    });
+
+    // ส่ง Response กลับไป
+    return res.status(200).json({ message: 'Logout สำเร็จ เคลียร์ Session และลบ Cookie เรียบร้อยแล้ว' });
+
+  } catch (error) {
+    console.error('Logout Error:', error);
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดในการ Logout' });
+  }
+};
+// /auth/demo-login  (DEMO_MODE only)
+// Skips the e-mail OTP step: signs in as the fixed demo account for the chosen role.
+export const demoLogin = async (req, res) => {
+  if (!isDemoMode()) {
+    return res.status(404).json({ message: 'ไม่พบเส้นทาง API ที่ท่านเรียกใช้งาน (404 Not Found)' });
+  }
+
+  const role = req.body?.role === 'staff' ? 'staff' : 'teacher';
+  const userId = DEMO_ACCOUNTS[role];
+
+  try {
+    const userResult = await pool.query(
+      'SELECT user_id, title, name, surname, email, role, session_id FROM public."Users" WHERE user_id = $1',
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(503).json({ message: 'ยังไม่มีข้อมูล demo (กรุณารัน npm run seed)' });
+    }
+
+    const user = userResult.rows[0];
+
+    // Many visitors share this account. Reuse the existing session so a new
+    // visitor does not trigger SESSION_SUPERSEDED for everyone else.
+    let sessionId = user.session_id;
+    if (!sessionId) {
+      sessionId = crypto.randomBytes(10).toString('hex');
+      await pool.query('UPDATE public."Users" SET session_id = $2, is_active = TRUE WHERE user_id = $1', [userId, sessionId]);
+    }
+
+    const accessToken = jwt.sign(
+      // jti keeps tokens unique, so one visitor's logout (blacklist) never hits another visitor
+      { user_id: user.user_id, role: user.role, name: user.name, session_id: sessionId, jti: crypto.randomUUID() },
+      process.env.JWT_SECRET,
+      { expiresIn: '30m' }
+    );
+    const refreshToken = jwt.sign({ user_id: user.user_id }, process.env.JWT_REFRESH_SECRET, { expiresIn: '7d' });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.json({
+      message: 'เข้าสู่ระบบ (demo) สำเร็จ',
+      token: accessToken,
+      user: {
+        user_id: user.user_id,
+        title: user.title,
+        name: user.name,
+        surname: user.surname,
+        email: user.email,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    console.error('Demo Login Error:', error);
+    res.status(500).json({ message: 'เกิดข้อผิดพลาดที่เซิร์ฟเวอร์' });
+  }
+};
