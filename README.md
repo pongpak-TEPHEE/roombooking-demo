@@ -78,6 +78,14 @@ Relevant code: [`backend/src/demo/`](backend/src/demo), [`frontend/src/component
 - **API + database:** Render Blueprint ([`render.yaml`](render.yaml)) → a free web service and a free PostgreSQL database.
 - **Frontend:** the [GitHub Pages workflow](.github/workflows/deploy-pages.yml) builds on every push to `main`. Set the repository variable `API_BASE_URL` to the Render service URL.
 
+## Known limitations of the hosted demo
+
+- **Cold start:** the free Render web service sleeps after about 15 minutes without traffic. The first visit after that takes about a minute while the API wakes up; the login page shows a "waking up the server" notice in the meantime.
+- **Database expiry:** the free Render PostgreSQL instance expires 30 days after creation (current one: **1 December 2026**). Before then, create a new database (or upgrade the plan), set its *Internal Database URL* as `DATABASE_URL` on the web service, and redeploy — the demo data is re-seeded automatically on start.
+- **Shared data:** every visitor uses the same demo accounts, so bookings made by one visitor are visible to others until the nightly reset at 04:00 (server time).
+- **Holiday calendar:** public holidays are only shown when `VITE_GOOGLE_CALENDAR_API_KEY` is set at build time; the hosted demo runs without it.
+- **Not for real data:** demo mode has no real authentication. Never point a `DEMO_MODE=true` server at a production database, and never commit real credentials — use `.env` files (gitignored) or the hosting provider's environment settings.
+
 ## Team
 
 Built as a university project by a two-person team:
