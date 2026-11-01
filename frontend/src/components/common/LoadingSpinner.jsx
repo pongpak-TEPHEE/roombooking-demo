@@ -1,8 +1,8 @@
 import React from "react";
-import mascot from "../../assets/image/mascot.png";
+import { Loader2 } from "lucide-react";
 
 /**
- * LoadingSpinner — ใช้รูปมาสคอต SCI KU หมุนแทน spinner ทุกที่ในแอป
+ * LoadingSpinner — spinner กลางที่ใช้ทุกที่ในแอป
  * Props:
  *  - text: ข้อความใต้รูป (ไม่ใส่ = ไม่แสดง)
  *  - fullPage: true = ครอบทั้งหน้าจอ (flex center)
@@ -10,12 +10,7 @@ import mascot from "../../assets/image/mascot.png";
 const LoadingSpinner = ({ text = "กำลังโหลด...", fullPage = false }) => {
   const spinner = (
     <div className="flex flex-col items-center justify-center gap-5">
-      <img
-        src={mascot}
-        alt="loading"
-        className="w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40 object-contain drop-shadow-lg"
-        style={{ animation: "mascot-spin 1.2s linear infinite" }}
-      />
+      <Loader2 className="w-14 h-14 sm:w-16 sm:h-16 animate-spin text-[#302782] dark:text-[#B2BB1E]" />
       {text && (
         <p className="text-sm sm:text-base font-medium text-black dark:text-white">
           {text}

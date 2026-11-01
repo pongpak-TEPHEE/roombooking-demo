@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 // 1. 🚩 เพิ่ม FileText เข้ามาสำหรับใช้เป็นไอคอนจัดการตารางเรียน
-import { Home, Calendar as CalendarIcon, Contact, QrCode, LogOut, Users, FileText, Download, MoreHorizontal } from 'lucide-react';
+import { Home, Calendar as CalendarIcon, Contact, QrCode, LogOut, Users, FileText, Download, MoreHorizontal, CalendarCheck } from 'lucide-react';
 import { jwtDecode } from "jwt-decode";
 import ActionModal from "../common/ActionModal";
 import ProfileDropdown from "./ProfileDropdown";
 import api, { setIsApiRedirecting } from '../../api/axios';
-import logo from "../../assets/image/sci ku src.png";
 import { appUrl } from "../../utils/appPath.js";
 
 const Navbar = () => {
@@ -142,18 +141,14 @@ const Navbar = () => {
           onClick={() => navigate("/dashboard")}
         >
           <div className="bg-white p-1.5 rounded-xl shadow-sm">
-            <img 
-              src={logo} 
-              alt="SCI KU SRC" 
-              className="h-10 sm:h-12 w-auto object-contain"
-            />
+            <CalendarCheck className="h-10 w-10 sm:h-12 sm:w-12 p-1.5 text-[#302782]" />
           </div>
           <div className="flex flex-col justify-center border-l border-white/20 pl-4">
             <h1 className="text-[#FFFFFF] text-sm sm:text-base font-black leading-tight">
-              คณะวิทยาศาสตร์
+              Room Booking
             </h1>
             <p className="text-[#FFFFFF]/90 text-xs sm:text-sm font-bold leading-tight">
-              ศรีราชา
+              Demo
             </p>
           </div>
         </div>

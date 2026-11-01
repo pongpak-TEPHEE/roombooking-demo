@@ -113,7 +113,7 @@ const RoomResults = () => {
                 
                 <p className="text-black dark:text-white text-xs sm:text-sm flex items-center gap-2 mb-8 font-bold">
                   <MapPin size={16} className="text-[#B2BB1E] shrink-0" />
-                  <span className="truncate">{room.location || "คณะวิทยาศาสตร์ ศรีราชา"}</span>
+                  <span className="truncate">{room.location || "-"}</span>
                 </p>
 
                 <div className="grid grid-cols-2 gap-3 sm:gap-4 mb-8">

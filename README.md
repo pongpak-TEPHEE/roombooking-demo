@@ -11,6 +11,8 @@ This repository is a **public demo build** of the system:
 **Live demo:** https://pongpak-tephee.github.io/roombooking-demo/
 (the API runs on a free tier that sleeps when idle, so the first request can take about a minute)
 
+![Demo login](docs/screenshots/demo-login.png)
+
 | Dashboard | Calendar | Booking approval |
 |---|---|---|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Calendar](docs/screenshots/calendar.png) | ![Manage bookings](docs/screenshots/manage-booking.png) |
@@ -83,4 +85,4 @@ Built as a university project by a two-person team:
 - Pongpak Tephee ([@pongpak-TEPHEE](https://github.com/pongpak-TEPHEE))
 - [@Boom5556-max](https://github.com/Boom5556-max)
 
-This is a portfolio demo and is not the faculty's official booking system.
+This is a portfolio demo and is not the faculty's official booking system; the faculty's logo, mascot and photos have been removed from this build.
